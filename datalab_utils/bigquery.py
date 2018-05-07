@@ -1,8 +1,39 @@
+import codecs
 import io
+import os
 import pandas as pd
+import tempfile
 import uuid
 
 from google.cloud import bigquery, storage
+
+
+def to_gbq(df,
+           project_id,
+           dataset_id,
+           table_id,
+           write_disposition='WRITE_EMPTY',
+           create_disposition='CREATE_IF_NEEDED'):
+    client = bigquery.Client(project=project_id)
+    dataset_ref = client.dataset(dataset_id, project=project_id)
+    table_ref = dataset_ref.table(table_id)
+
+    temporary_local_file = os.path.join(tempfile.gettempdir(), str(uuid.uuid4()) + '.csv')
+    print('Creating temporary %s' % temporary_local_file)
+    df.to_csv(temporary_local_file, index=False, encoding='utf-8')
+    rb_file = codecs.open(temporary_local_file, 'rb', encoding='utf-8')
+
+    print('Loading temporary csv to %s' % table_ref)
+    job_config = bigquery.LoadJobConfig()
+    job_config.encoding = 'UTF-8'
+    job_config.source_format = 'CSV'
+    job_config.write_disposition = write_disposition
+    job_config.create_disposition = create_disposition
+    job_config.autodetect = True
+    job = client.load_table_from_file(rb_file, table_ref, job_config=job_config)
+    job.result()
+
+    os.remove(temporary_local_file)
 
 
 def read_gbq(
@@ -98,6 +129,7 @@ def _ensure_bucket(project_id, bucket_name, location):
     if not bucket.exists():
         print('Creating bucket gs://%s (location: %s)' % (bucket_name, location))
         bucket.create()
+    return bucket
 
 
 def _delete_bucket_data(project_id, bucket_name, work_directory):
