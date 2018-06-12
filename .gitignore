@@ -4,6 +4,7 @@ target/
 .project
 .settings
 .idea
+.eggs/
 *.iml
 *egg-info/
 dist/

@@ -8,6 +8,28 @@ import uuid
 from google.cloud import bigquery, storage
 
 
+def execute_bq(project_id,
+               query,
+               destination_project=None,
+               destination_dataset=None,
+               destination_table=None,
+               create_disposition='CREATE_IF_NEEDED',
+               write_disposition='WRITE_TRUNCATE'):
+    client = bigquery.Client(project=project_id)
+    job_config = bigquery.QueryJobConfig()
+    job_config.use_legacy_sql = False
+
+    if destination_dataset and destination_table:
+        dataset_ref = client.dataset(destination_dataset, project=destination_project or project_id)
+        table_ref = dataset_ref.table(destination_table)
+        job_config.destination = table_ref
+        job_config.create_disposition = create_disposition
+        job_config.write_disposition = write_disposition
+
+    job = client.query(query, job_config=job_config)
+    job.result()
+
+
 def to_gbq(df,
            project_id,
            dataset_id,

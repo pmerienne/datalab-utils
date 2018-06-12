@@ -32,9 +32,13 @@ setup(
         'Programming Language :: Python :: 2.7',
     ],
     install_requires=[
-        'datalab>=1.1.2',
         'requests>=2.18.4',
         'tqdm>=4.23.2',
+        'google-api-python-client>=1.7.3',
+        'google-cloud-bigquery>=1.3.0',
+        'google-cloud-storage>=1.10.0',
+        'oauth2client>=3.0.0',
+        'pandas-gbq>=0.4.1'
     ],
     setup_requires=[
         'pypandoc>=1.4'
