@@ -1,5 +1,8 @@
+import codecs
 import io
+import os
 import pandas as pd
+import tempfile
 import uuid
 
 from google.cloud import bigquery, storage
@@ -34,19 +37,31 @@ def to_gbq(df,
            write_disposition='WRITE_EMPTY',
            create_disposition='CREATE_IF_NEEDED'):
     if df.empty:
-        print('Dataframe is empty, skipping load')
+        print('DataFrame is empty, skipping load')
         return
     client = bigquery.Client(project=project_id)
     dataset_ref = client.dataset(dataset_id, project=project_id)
     table_ref = dataset_ref.table(table_id)
 
-    print('Loading dataframe to %s' % table_ref)
-    job_config = bigquery.LoadJobConfig()
-    job_config.write_disposition = write_disposition
-    job_config.create_disposition = create_disposition
-    job_config.autodetect = True
-    job = client.load_table_from_dataframe(df, table_ref, job_config=job_config)
-    job.result()
+    print('Loading DataFrame to %s' % table_ref)
+    temporary_local_file = os.path.join(tempfile.gettempdir(), str(uuid.uuid4()) + '.csv')
+    try:
+        print('Creating temporary %s' % temporary_local_file)
+        df.to_csv(temporary_local_file, index=False, encoding='utf-8')
+        rb_file = codecs.open(temporary_local_file, 'rb', encoding='utf-8')
+        print('Loading temporary csv to %s' % table_ref)
+        job_config = bigquery.LoadJobConfig()
+        job_config.encoding = 'UTF-8'
+        job_config.source_format = 'CSV'
+        job_config.write_disposition = write_disposition
+        job_config.create_disposition = create_disposition
+        job_config.schema = _get_bq_schema(df)
+        job_config.skip_leading_rows = 1
+        job = client.load_table_from_file(rb_file, table_ref, job_config=job_config)
+        job.result()
+        print('DataFrame loaded to %s' % table_ref)
+    finally:
+        os.remove(temporary_local_file)
 
 
 def read_gbq(
@@ -152,3 +167,19 @@ def _delete_bucket_data(project_id, bucket_name, work_directory):
 
     print('Deleting %s files in gs://%s/%s' % (len(blobs), bucket_name, work_directory))
     bucket.delete_blobs(blobs)
+
+
+def _get_bq_schema(df):
+    BQ_TYPES = {
+        'i': 'INTEGER',
+        'b': 'BOOLEAN',
+        'f': 'FLOAT',
+        'O': 'STRING',
+        'S': 'STRING',
+        'U': 'STRING',
+        'M': 'TIMESTAMP'
+    }
+    return [
+        bigquery.SchemaField(column_name, BQ_TYPES.get(dtype.kind, 'STRING'))
+        for column_name, dtype in df.dtypes.iteritems()
+    ]
