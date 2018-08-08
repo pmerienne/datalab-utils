@@ -4,7 +4,9 @@ Datalab Utils is a collection of small Python functions and classes which simpli
 
 # Usage
 ```
-from datalab_utils.bigquery import read_bq_table, read_bq_query, execute_bq
+from datalab_utils import to_gbq, read_gbq, read_gs_csv
+
+# TODO
 ```
 
 # Dev Guide
