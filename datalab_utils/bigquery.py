@@ -26,6 +26,7 @@ def execute_bq(project_id,
         dataset_ref = client.dataset(destination_dataset, project=destination_project or project_id)
         table_ref = dataset_ref.table(destination_table)
         job_config.destination = table_ref
+        job_config.allow_large_results = True
         job_config.create_disposition = create_disposition
         job_config.write_disposition = write_disposition
 
@@ -128,6 +129,7 @@ def _extract_bq_table(project_id, dataset_id, table_id, bucket_name, facturation
     extract_conf = bigquery.ExtractJobConfig()
     extract_conf.compression = 'GZIP'
     extract_conf.destination_format = 'CSV'
+    extract_conf.print_header = False
 
     # Ensure bucket exists
     location = client.get_dataset(dataset_ref).location
