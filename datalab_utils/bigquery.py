@@ -2,6 +2,7 @@ import codecs
 import io
 import os
 import pandas as pd
+import random
 import tempfile
 import uuid
 
@@ -15,11 +16,13 @@ def execute_bq(project_id,
                destination_table=None,
                create_disposition='CREATE_IF_NEEDED',
                write_disposition='WRITE_TRUNCATE'):
+    print('Executing (on project %s):\n%s' % (project_id, query))
     client = bigquery.Client(project=project_id)
     job_config = bigquery.QueryJobConfig()
     job_config.use_legacy_sql = False
 
     if destination_dataset and destination_table:
+        print('Writing results to: %s.%s' % (destination_dataset, destination_table))
         dataset_ref = client.dataset(destination_dataset, project=destination_project or project_id)
         table_ref = dataset_ref.table(destination_table)
         job_config.destination = table_ref
@@ -67,10 +70,25 @@ def to_gbq(df,
 def read_gbq(
         query,
         project_id,
-        use_legacy_sql=False):
+        tmp_bucket=None,
+        tmp_dataset=None):
+    if tmp_bucket and tmp_dataset:
+        return _read_gbq_with_temporary_storage(query, project_id, tmp_bucket, tmp_dataset)
+    else:
+        return _read_gbq_direct(query, project_id)
+
+
+def _read_gbq_with_temporary_storage(query, project_id, tmp_bucket, tmp_dataset):
+    tmp_table = random.randint(0, 9999999999)
+    execute_bq(project_id, query, destination_dataset=tmp_dataset, destination_table=tmp_table)
+    df = read_gbq_table(project_id, tmp_dataset, tmp_table, tmp_bucket)
+    _delete_bq_table(project_id, tmp_dataset, tmp_table)
+    return df
+
+
+def _read_gbq_direct(query, project_id):
     job_config = bigquery.QueryJobConfig()
     job_config.flatten_results = True
-    job_config.use_legacy_sql = use_legacy_sql
 
     print('Executing %s' % query)
     client = bigquery.Client(project=project_id)
@@ -118,6 +136,7 @@ def _extract_bq_table(project_id, dataset_id, table_id, bucket_name, facturation
     print('Extracting table %s to %s' % (table_ref, gs_uri))
     extract_job = client.extract_table(table_ref, gs_uri, job_config=extract_conf)
     extract_job.result()
+    _check_job_status(extract_job)
     return work_directory
 
 
@@ -143,7 +162,7 @@ def _load_from_storage(project_id, bucket_name, work_directory, dtype, tqdm):
     parts = list(bucket.list_blobs(prefix=work_directory + "/"))
     parts = tqdm(parts) if tqdm else parts
     raw_data = []
-    print('Loading %s files from gs://%s/%s' % (len(parts), bucket_name, work_directory))
+    print('Loading DataFrame from %s files in gs://%s/%s' % (len(parts), bucket_name, work_directory))
     for part in parts:
         df = _load_part(part, dtype)
         raw_data.append(df)
@@ -169,6 +188,13 @@ def _delete_bucket_data(project_id, bucket_name, work_directory):
     bucket.delete_blobs(blobs)
 
 
+def _delete_bq_table(project_id, dataset_id, table_id):
+    client = bigquery.Client(project=project_id)
+    dataset_ref = client.dataset(dataset_id)
+    table_ref = dataset_ref.table(table_id)
+    client.delete_table(table_ref)
+
+
 def _get_bq_schema(df):
     BQ_TYPES = {
         'i': 'INTEGER',
@@ -183,3 +209,9 @@ def _get_bq_schema(df):
         bigquery.SchemaField(column_name, BQ_TYPES.get(dtype.kind, 'STRING'))
         for column_name, dtype in df.dtypes.iteritems()
     ]
+
+
+def _check_job_status(job):
+    error_result = job.error_result
+    if error_result:
+        raise RuntimeError('Could not execute operation: %s' % error_result.get('message', ''))
