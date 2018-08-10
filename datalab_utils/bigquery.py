@@ -22,7 +22,7 @@ def execute_bq(project_id,
     job_config.use_legacy_sql = False
 
     if destination_dataset and destination_table:
-        print('Writing results to: %s.%s' % (destination_dataset, destination_table))
+        print('Writing results to: %s.%s.%s' % (project_id, destination_dataset, destination_table))
         dataset_ref = client.dataset(destination_dataset, project=destination_project or project_id)
         table_ref = dataset_ref.table(destination_table)
         job_config.destination = table_ref
@@ -111,8 +111,8 @@ def read_gbq_table(
         facturation_project_id=None,
         tqdm=None):
     work_directory = _extract_bq_table(project_id, dataset_id, table_id, temporary_bucket_name, facturation_project_id)
-    dtype = _table_dtypes(project_id, dataset_id, table_id)
-    df = _load_from_storage(project_id, temporary_bucket_name, work_directory, dtype, tqdm)
+    columns = _table_columns(project_id, dataset_id, table_id)
+    df = _load_from_storage(project_id, temporary_bucket_name, work_directory, columns, tqdm)
     _delete_bucket_data(project_id, temporary_bucket_name, work_directory)
     return df
 
@@ -142,23 +142,18 @@ def _extract_bq_table(project_id, dataset_id, table_id, bucket_name, facturation
     return work_directory
 
 
-def _table_dtypes(project_id, dataset_id, table_id):
+def _table_columns(project_id, dataset_id, table_id):
     client = bigquery.Client(project=project_id)
     dataset_ref = client.dataset(dataset_id, project=project_id)
     table_ref = dataset_ref.table(table_id)
     dtype_map = {'STRING': 'str', 'INTEGER': 'float64', 'FLOAT': 'float64', 'BOOLEAN': 'bool', 'TIMESTAMP': 'M8[ns]', 'RECORD': 'object'}
-    return {
-        field.name: dtype_map[field.field_type]
+    return [
+        [field.name, dtype_map[field.field_type]]
         for field in client.get_table(table_ref).schema
-    }
+    ]
 
 
-def _load_part(blob, dtype):
-    content = blob.download_as_string()
-    return pd.read_csv(io.BytesIO(content), dtype=dtype, compression='gzip')
-
-
-def _load_from_storage(project_id, bucket_name, work_directory, dtype, tqdm):
+def _load_from_storage(project_id, bucket_name, work_directory, columns, tqdm):
     client = storage.client.Client(project=project_id)
     bucket = storage.bucket.Bucket(client, bucket_name)
     parts = list(bucket.list_blobs(prefix=work_directory + "/"))
@@ -166,9 +161,17 @@ def _load_from_storage(project_id, bucket_name, work_directory, dtype, tqdm):
     raw_data = []
     print('Loading DataFrame from %s files in gs://%s/%s' % (len(parts), bucket_name, work_directory))
     for part in parts:
-        df = _load_part(part, dtype)
+        df = _load_part(part, columns)
         raw_data.append(df)
-    return pd.concat(raw_data)
+    final = pd.concat(raw_data)
+    return final
+
+
+def _load_part(blob, columns):
+    content = blob.download_as_string()
+    names = [c[0] for c in columns]
+    dtype = dict(columns)
+    return pd.read_csv(io.BytesIO(content), names=names, dtype=dtype, compression='gzip')
 
 
 def _ensure_bucket(project_id, bucket_name, location):
@@ -191,6 +194,7 @@ def _delete_bucket_data(project_id, bucket_name, work_directory):
 
 
 def _delete_bq_table(project_id, dataset_id, table_id):
+    print('Deleting %s.%s.%s' % (project_id, dataset_id, table_id))
     client = bigquery.Client(project=project_id)
     dataset_ref = client.dataset(dataset_id)
     table_ref = dataset_ref.table(table_id)
